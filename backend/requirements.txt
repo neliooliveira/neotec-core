@@ -1,0 +1,11 @@
+Django==5.0
+DjangoRestFramework==3.14
+psycopg2-binary==2.9
+gunicorn==21.2
+celery==5.3
+valkey==5.0
+django-cors-headers==4.3
+python-decouple==3.8
+django-environ==0.11
+python-dateutil==2.8
+Pillow==10.1
