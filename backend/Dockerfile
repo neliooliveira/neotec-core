@@ -6,9 +6,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-# Install system dependencies
+# Install system dependencies (including PostgreSQL client and build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
+    libpq-dev \
+    gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
@@ -20,7 +22,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 COPY . .
 
 # Run migrations and collect static files
-RUN python manage.py collectstatic --noinput || true
+RUN python manage.py collectstatic --noinput 2>/dev/null || true
 
 EXPOSE 8000
 
