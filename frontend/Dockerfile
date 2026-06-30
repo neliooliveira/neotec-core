@@ -5,11 +5,11 @@ WORKDIR /app
 ENV NODE_ENV=development
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 
-RUN npm run build || true
+RUN npm run build 2>/dev/null || true
 
 EXPOSE 3000
 
