@@ -1,0 +1,160 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: neotec-postgres
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-neotec_core}
+      POSTGRES_USER: ${DATABASE_USER:-neotec}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - neotec-core-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-neotec}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: neotec-valkey
+    command: valkey-server --appendonly yes
+    volumes:
+      - valkey_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - neotec-core-net
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neotec-backend
+    command: gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings.development
+      DATABASE_URL: postgresql://${DATABASE_USER:-neotec}:${DATABASE_PASSWORD:-postgres_password}@postgres:5432/${DATABASE_NAME:-neotec_core}
+      REDIS_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/2}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://valkey:6379/3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - static_volume:/app/static
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    networks:
+      - neotec-core-net
+    environment_file:
+      - .env
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    container_name: neotec-frontend
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "3000:3000"
+    networks:
+      - neotec-core-net
+
+  caddy:
+    image: caddy:latest
+    container_name: neotec-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@neotec.com}
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - neotec-core-net
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neotec-celery-worker
+    command: celery -A core worker -l info
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings.development
+      DATABASE_URL: postgresql://${DATABASE_USER:-neotec}:${DATABASE_PASSWORD:-postgres_password}@postgres:5432/${DATABASE_NAME:-neotec_core}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/2}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://valkey:6379/3}
+    depends_on:
+      - postgres
+      - valkey
+      - backend
+    volumes:
+      - ./backend:/app
+    networks:
+      - neotec-core-net
+    environment_file:
+      - .env
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neotec-celery-beat
+    command: celery -A core beat -l info
+    environment:
+      DJANGO_SETTINGS_MODULE: core.settings.development
+      DATABASE_URL: postgresql://${DATABASE_USER:-neotec}:${DATABASE_PASSWORD:-postgres_password}@postgres:5432/${DATABASE_NAME:-neotec_core}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://valkey:6379/2}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://valkey:6379/3}
+    depends_on:
+      - postgres
+      - valkey
+      - backend
+    volumes:
+      - ./backend:/app
+    networks:
+      - neotec-core-net
+    environment_file:
+      - .env
+
+networks:
+  neotec-core-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  valkey_data:
+  static_volume:
+  media_volume:
+  caddy_data:
+  caddy_config:
